@@ -9,17 +9,16 @@ Review code changes for quality, correctness, security, and style issues.
 
 ## Parameters
 
-- **file_path** (string, required): Path to the file to review.
-- **focus** (string, optional): Optional focus area for the review (e.g., security, performance, style).
+- **url** (string, required): URL of the code changes to review.
 
 ## Instructions
 
-Review the provided code file and identify:
-1. Bugs or logical errors
-2. Security vulnerabilities
-3. Performance issues
-4. Code style and readability concerns
-5. Missing error handling
-6. Opportunities for improvement
+Review the provided code changes and identify:
+1. Whether the author has signed cla
+2. if non googler, whether they have check the pr pre checks
+3. Try if there is a counter example that are not fixed by the code. If so, come up with a test case to demonstrate it.
+4. Whether the code trigger regression, if so, come up with a test case to demonstrate it. 
+5. Whether the code can be simplified or or refactor to be more readable and maintainable.
+
 
 Provide clear, actionable feedback with specific line references where applicable.
