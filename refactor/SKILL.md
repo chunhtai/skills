@@ -1,0 +1,25 @@
+---
+name: refactor
+description: Refactor code to improve readability, maintainability, and performance without changing behavior.
+---
+
+# refactor
+
+Refactor code to improve readability, maintainability, and performance without changing behavior.
+
+## Parameters
+
+- **file_path** (string, required): Path to the file to refactor.
+- **goal** (string, optional): Specific refactoring goal (e.g., extract method, reduce duplication, improve naming).
+
+## Instructions
+
+Refactor the provided code while preserving its behavior:
+1. Identify code smells (long methods, duplicate code, poor naming, etc.)
+2. Apply appropriate refactoring patterns (extract method/class, rename, simplify conditionals, etc.)
+3. Ensure all existing tests still pass after refactoring
+4. Improve variable and function names to be more descriptive
+5. Remove dead code and unnecessary complexity
+6. Add or update comments where the logic is non-obvious
+
+Document each significant change made and why.
