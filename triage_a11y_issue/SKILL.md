@@ -9,7 +9,7 @@ Review linked issue and determine if it is a valid a11y bug report, feature requ
 
 ## Parameters
 
-- **issue_url** (string, required): URL of the issue to triage.
+- **issue_url** (string, required): URL of the issue to triage, or a page to a list of issues.
 
 ## Instructions
 
