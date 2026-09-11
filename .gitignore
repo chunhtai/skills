@@ -1,0 +1,7 @@
+# Everything the agent accumulates at runtime. The repo is a skeleton of agent
+# configuration; the memory index, the digest queue, and any machine-generated
+# skills are local state and must never be pushed.
+tmp/
+
+__pycache__/
+*.pyc

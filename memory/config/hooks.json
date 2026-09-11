@@ -1,0 +1,18 @@
+{
+  "conversation-memory": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 ~/git/skills/memory/scripts/retrieve.py",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python3 ~/git/skills/memory/scripts/mark_dirty.py",
+        "timeout": 10
+      }
+    ]
+  }
+}
