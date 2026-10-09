@@ -22,7 +22,8 @@ produces may be committable.
 
     memory/
       scripts/          all executable code
-      config/           templates copied into ~/.gemini/config by install.sh
+      config/           hooks.json, plus the sidecar definitions install.sh
+                        symlinks into ~/.gemini/config
       install.sh
     skills/             hand-maintained skills, committed
     rules/              hand-maintained rules, committed
@@ -30,25 +31,40 @@ produces may be committable.
     tmp/                gitignored, never pushed
       memory/index.jsonl        the index
       memory/dirty.jsonl        conversations waiting to be digested
+      memory/inflight.jsonl     handed to a digest agent, not yet confirmed
+      memory/undigested.jsonl   gave up after repeated attempts, kept for you
+      memory/queues.lock        guards rewrites of the two files above
       memory/access.log         retrieval hits, folded in by the digest
       memory/injections.jsonl   what was injected where, graded by the digest
       memory/retrieve.log       one line per hook call, for tuning
       memory/seen/              hash of the last user message per conversation
       memory/exclude.txt        conversations this system created
       memory/promoted.json      patterns already turned into skills
+      memory/digest_prompt.txt  the batch a digest agent is working on
       memory/proposals/         rule suggestions awaiting review
       memory/proposals/quarantine/  generated skills that tripped the secret scan
       skills/                   machine-generated skills
 
     ~/.gemini/config/
       hooks.json                merged, points back at memory/scripts/
-      sidecars/memory-digest/   points back at memory/scripts/
-      sidecars/memory-promote/
+      sidecars/memory-digest    symlink to memory/config/sidecars/memory-digest
+      sidecars/memory-promote   symlink to memory/config/sidecars/memory-promote
       skills.json               registers both skills/ and tmp/skills
 
 `tmp/skills` is registered in `skills.json` so generated skills still load.
 They are active but never committed. Move one into `skills/` by hand if you
 decide to keep it.
+
+The two sidecar entries are symlinks, so a change to a `sidecar.json` here is
+live without reinstalling. That rules out an absolute path inside the file,
+since the committed tree cannot know where the repo was cloned. The script
+paths are therefore relative to the sidecar directory, which works because the
+runtime sets the working directory to that directory and the kernel resolves
+the link before resolving `..`. Both of those are assumptions about the
+runtime. If a future build stops setting the working directory that way, or
+skips symlinked directories when it scans `~/.gemini/config/sidecars`, the
+sidecars go quiet rather than fail loudly, so check that the link resolves
+before blaming the schedule.
 
 ## Pieces
 
@@ -74,6 +90,21 @@ of silence before deciding a conversation is finished.
 
 The digest spawns one conversation per run, not one per transcript, so a busy
 day adds about six background conversations rather than fifty.
+
+Spawning that conversation is not the same as it finishing: `agentapi
+new-conversation` returns as soon as the conversation exists. Dispatched
+records therefore move to `inflight.jsonl` instead of being deleted, and they
+only leave it when `upsert.py` writes an entry naming the conversation or the
+agent acknowledges a skip with `upsert.py --skip`.
+
+Deciding that an agent is gone is the awkward part. A batch can be twenty
+transcripts, so being slow is normal, and an agent that skipped a transcript
+without saying so looks exactly like one that died holding it. Nothing is
+reclaimed for an hour; after that a batch is only taken back if the agent has
+written nothing to its own transcript for twenty minutes, with a six hour
+ceiling for one that looks busy forever. A record reclaimed three times goes
+to `undigested.jsonl` rather than being deleted, because a retry cap that
+throws work away is the same bug this whole arrangement exists to prevent.
 
 Retrieval scores an entry by the overlap between the query and the entry's
 title, keywords, and aliases. Overlapping words are weighted by inverse
@@ -140,6 +171,50 @@ Fix its `keywords` and `aliases` with `upsert.py`, or delete the line from
 `index.jsonl`. `retrieve.log` shows what each hook call matched, which is the
 faster way to tell a scoring problem from a summarization problem.
 
+## When the sidecars do not run
+
+In some builds the editor's sidecar manager never initializes: every sidecar
+RPC answers `sidecar manager not initialized`, and nothing in
+`~/.gemini/config/sidecars` ever starts. You can tell by running the digest by
+hand and finding a queue that goes back weeks.
+
+In the same builds `agentapi new-conversation` fails with `project_id is
+required when providing project_env_config`, so even a working schedule could
+not spawn the digest agent. Both faults are inside the editor binary and
+neither can be fixed from here.
+
+An OS scheduler was tried and removed. launchd fired the job on time and the
+job still could not spawn an agent, so the only thing it added was a copy of
+the editor's CSRF token on disk for the job to authenticate with.
+
+What works is to run the round in band, with the agent you are already talking
+to:
+
+    python3 scripts/digest.py --prepare
+
+That recovers in-flight work, selects the batch, writes the prompt to
+`tmp/memory/digest_prompt.txt`, and records the handover against a placeholder
+conversation. The agent hands that prompt to a subagent, then names it:
+
+    python3 scripts/digest.py --attach <subagent-conversation-id>
+
+From there the subagent calls `upsert.py` exactly as a spawned digest agent
+would, and the in-flight bookkeeping behaves the same. `--attach` matters for
+recovery: without a real conversation id, `recover_inflight` cannot tell a
+working agent from a dead one.
+
+## Tests
+
+    python3 -m unittest discover -s memory/tests
+
+They cover the digest queue handover: what happens when the agent dies, when
+the Stop hook fires mid-dispatch, when the spawn fails, and when a second
+digest starts while one is running. Also the recorded editor connection
+details, where the interesting cases are a process that has nothing to record
+and must not wipe a good record, and a leftover temp file that must not carry
+the token at wide permissions. Each test points the scripts at a temporary
+directory, so running them does not touch `tmp/`.
+
 ## Pausing it
 
 To stop it temporarily without unwiring anything, set `"enabled": false` on
@@ -153,8 +228,9 @@ the two sidecars from the sidecar UI.
 ./uninstall.sh --purge   # also delete tmp/memory and tmp/skills
 ```
 
-It removes the `conversation-memory` hook, the two sidecar directories, and
-the `tmp/skills` entry in `skills.json`. Other hooks in `hooks.json` are kept,
+It removes the `conversation-memory` hook, the two sidecar symlinks, and
+the `tmp/skills` entry in `skills.json`. Removing a symlink leaves the
+definition in this repo untouched. Other hooks in `hooks.json` are kept,
 and `hooks.json` is deleted only if nothing else is left in it. The
 hand-maintained `skills/` registration is left alone, since it likely predates
 this system.

@@ -3,9 +3,9 @@
   "args": [
     "0 9 * * 1",
     "python3",
-    "__REPO_ROOT__/memory/scripts/promote.py"
+    "../../../scripts/promote.py"
   ],
   "restart_policy": "always",
   "display_name": "Skill promotion",
-  "description": "Mondays at 09:00, clusters the corrections recorded in the memory index. A procedure correction seen in three or more distinct conversations is turned into a skill under tmp/skills, which is gitignored. Generated files are scanned for credentials and quarantined if they trip it. Preference corrections are collected into tmp/memory/proposals/rule_suggestions.md for manual review instead of editing the rules file."
+  "description": "Mondays at 09:00, clusters the corrections recorded in the memory index. A procedure correction seen in three or more distinct conversations is turned into a skill under tmp/skills, which is gitignored. Generated files are scanned for credentials and quarantined if they trip it. Preference corrections are collected into tmp/memory/proposals/rule_suggestions.md for manual review instead of editing the rules file. The script path is relative to this directory, which install.sh symlinks into the config tree, so it resolves back into the repo."
 }

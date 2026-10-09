@@ -28,13 +28,25 @@ def main():
         conversation_id = payload.get("conversationId", "")
         if conversation_id:
             workspaces = payload.get("workspacePaths") or []
-            memlib.append_jsonl(memlib.DIRTY_PATH, {
+            record = {
                 "id": conversation_id,
                 "ts": time.time(),
                 "workspace": workspaces[0] if workspaces else "",
                 "transcript": payload.get("transcriptPath", ""),
                 "artifacts": payload.get("artifactDirectoryPath", ""),
-            })
+            }
+            try:
+                # The digest rewrites this file. Appending during a rewrite
+                # writes into the file the rewrite is about to replace, so the
+                # record vanishes. The lock is held only across that rewrite.
+                with memlib.file_lock("queues", timeout=2.0):
+                    memlib.append_jsonl(memlib.DIRTY_PATH, record)
+            except Exception:
+                # Any lock failure at all, not just a timeout: a lock file
+                # that cannot even be opened must not cost the record. Append
+                # unsynchronised and accept the small chance of losing it to a
+                # concurrent rewrite.
+                memlib.append_jsonl(memlib.DIRTY_PATH, record)
     except Exception:
         # Never block the agent because bookkeeping failed.
         pass

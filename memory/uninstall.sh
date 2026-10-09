@@ -75,7 +75,13 @@ PY
 
 for name in memory-digest memory-promote; do
   dir="${CONFIG_DIR}/sidecars/${name}"
-  if [ -d "$dir" ]; then
+  # Test -L first. install.sh links this at the repo, and rm -rf on a symlink
+  # would still only drop the link, but being explicit keeps it obvious that
+  # nothing in the repo is at risk here.
+  if [ -L "$dir" ]; then
+    rm "$dir"
+    echo "unlinked ${dir}"
+  elif [ -d "$dir" ]; then
     rm -rf "$dir"
     echo "removed ${dir}"
   else

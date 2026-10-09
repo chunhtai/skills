@@ -6,10 +6,10 @@
 # the index, the digest queue, and any machine-generated skills. The committed
 # tree stays a clean skeleton.
 #
-# The config directory only gets the small files the runtime insists on
-# finding there: hooks.json and the sidecar definitions. Both point back at
-# the scripts in this repo, so editing a script here takes effect without
-# reinstalling.
+# The config directory only gets what the runtime insists on finding there:
+# hooks.json, and a symlink per sidecar pointing at the definition in this
+# repo. hooks.json names the scripts by absolute path. Either way, editing a
+# script or a sidecar definition here takes effect without reinstalling.
 #
 # Safe to run repeatedly.
 
@@ -72,13 +72,29 @@ os.replace(tmp, target)
 print("wrote %s" % target)
 PY
 
+# Each sidecar directory is symlinked, not copied, so editing sidecar.json in
+# this repo takes effect without reinstalling. That is also why the script
+# paths inside sidecar.json are relative: the runtime sets the working
+# directory to the sidecar folder, which resolves through the link back into
+# the repo.
 for name in memory-digest memory-promote; do
-  mkdir -p "${CONFIG_DIR}/sidecars/${name}"
-  sed "s|__REPO_ROOT__|${REPO_ROOT}|g" \
-      "${REPO_DIR}/config/sidecars/${name}/sidecar.json" \
-      > "${CONFIG_DIR}/sidecars/${name}/sidecar.json"
-  echo "wrote ${CONFIG_DIR}/sidecars/${name}/sidecar.json"
+  link="${CONFIG_DIR}/sidecars/${name}"
+  target="${REPO_DIR}/config/sidecars/${name}"
+
+  if [ -L "$link" ]; then
+    rm "$link"
+  elif [ -e "$link" ]; then
+    # An older install wrote a real directory here. Park it rather than
+    # delete it, but park it outside sidecars/ so the runtime does not load
+    # it as a second copy of the same schedule.
+    mv "$link" "${CONFIG_DIR}/${name}.replaced.$(date +%s)"
+    echo "  moved the previous ${name} directory out of sidecars/"
+  fi
+
+  ln -s "$target" "$link"
+  echo "linked ${link} -> ${target}"
 done
+
 
 # Machine-generated skills live in tmp/skills. They still have to be
 # discoverable or promotion is pointless, so register that path too.

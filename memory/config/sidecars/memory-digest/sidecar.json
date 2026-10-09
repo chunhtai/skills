@@ -3,9 +3,9 @@
   "args": [
     "@every 4h",
     "python3",
-    "__REPO_ROOT__/memory/scripts/digest.py"
+    "../../../scripts/digest.py"
   ],
   "restart_policy": "always",
   "display_name": "Memory digest",
-  "description": "Every 4 hours, summarizes conversations the Stop hook marked dirty into the keyword-searchable memory index under tmp/memory. Skips conversations still active, shorter than two user turns, subagent trajectories, and conversations this system created itself. Batches all pending work into a single agent conversation per run."
+  "description": "Every 4 hours, summarizes conversations the Stop hook marked dirty into the keyword-searchable memory index under tmp/memory. Skips conversations still active, shorter than two user turns, subagent trajectories, and conversations this system created itself. Batches all pending work into a single agent conversation per run. The script path is relative to this directory, which install.sh symlinks into the config tree, so it resolves back into the repo."
 }

@@ -4,6 +4,8 @@ Nothing here may raise into a hook. Callers in hook context must wrap use of
 this module in try/except and always emit valid JSON on stdout.
 """
 
+import contextlib
+import fcntl
 import json
 import math
 import os
@@ -27,6 +29,14 @@ MEMORY_DIR = os.path.join(TMP_DIR, "memory")
 GENERATED_SKILLS_DIR = os.path.join(TMP_DIR, "skills")
 INDEX_PATH = os.path.join(MEMORY_DIR, "index.jsonl")
 DIRTY_PATH = os.path.join(MEMORY_DIR, "dirty.jsonl")
+# Conversations handed to a digest agent but not yet confirmed digested.
+# Records only leave here once something proves the agent dealt with them, so
+# an agent that dies mid-batch loses nothing.
+INFLIGHT_PATH = os.path.join(MEMORY_DIR, "inflight.jsonl")
+# Work that repeated attempts could not digest. Parked rather than deleted:
+# the whole point of the queue is that a transcript is never silently lost,
+# and a retry cap that drops records would reintroduce exactly that.
+UNDIGESTED_PATH = os.path.join(MEMORY_DIR, "undigested.jsonl")
 ACCESS_LOG = os.path.join(MEMORY_DIR, "access.log")
 # What was injected into which conversation, so the digest can judge
 # afterwards whether any of it actually helped.
@@ -82,6 +92,7 @@ def agentapi_path():
     if found:
         return found
     return os.path.join(APP_DATA_DIR, "bin", "agentapi")
+
 
 # Conversations idle for less than this are still considered active and are
 # not digested yet.
@@ -211,9 +222,15 @@ def read_index():
 
 
 def write_index(entries):
-    """Atomic replace so a crash mid-write cannot truncate the index."""
+    """Atomic replace so a crash mid-write cannot truncate the index.
+
+    The temp file is per process. Two writers sharing one would interleave
+    into it and then both rename, which produces a corrupt index rather than
+    a lost update. upsert.py takes a lock on top of this to stop the lost
+    update as well.
+    """
     ensure_dirs()
-    tmp = INDEX_PATH + ".tmp"
+    tmp = "%s.tmp.%d" % (INDEX_PATH, os.getpid())
     with open(tmp, "w", encoding="utf-8") as fh:
         for entry in entries:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -224,6 +241,108 @@ def append_jsonl(path, obj):
     ensure_dirs()
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+# How long to wait for a queue lock before giving up. The holder only ever
+# keeps it across a file rewrite, so anything longer means something is wedged
+# and the caller is better off proceeding unsynchronised than hanging.
+LOCK_TIMEOUT = 5.0
+
+
+class LockUnavailable(Exception):
+    """The queue lock could not be taken within LOCK_TIMEOUT."""
+
+
+@contextlib.contextmanager
+def file_lock(name, timeout=LOCK_TIMEOUT):
+    """Advisory lock around a queue file.
+
+    dirty.jsonl and inflight.jsonl are read-modify-written by the digest while
+    the Stop hook appends to one and the digest agent's upserts rewrite the
+    other. Without a lock a rewrite silently drops whatever landed after the
+    read.
+
+    Polls rather than blocking so a caller in hook context can bail out
+    instead of stalling a turn behind a wedged holder.
+    """
+    ensure_dirs()
+    path = os.path.join(MEMORY_DIR, name + ".lock")
+    handle = open(path, "a+")
+    deadline = time.time() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.time() >= deadline:
+                    raise LockUnavailable(path)
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+    finally:
+        handle.close()
+
+
+def read_jsonl(path):
+    records = []
+    if not os.path.exists(path):
+        return records
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
+def write_jsonl(path, records):
+    """Atomic replace so a crash mid-write cannot truncate a queue."""
+    ensure_dirs()
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+
+
+def read_inflight():
+    return read_jsonl(INFLIGHT_PATH)
+
+
+def write_inflight(records):
+    write_jsonl(INFLIGHT_PATH, records)
+
+
+def resolve_inflight(conversation_ids):
+    """Mark conversations as digested, clearing them from the in-flight file.
+
+    Called by upsert.py once an entry naming those conversations is in the
+    index, and by upsert.py --skip when the agent decided a conversation was
+    not worth an entry. Either way the work is done and must not be retried.
+
+    Returns the number of records cleared.
+    """
+    wanted = {cid for cid in conversation_ids if cid}
+    if not wanted:
+        return 0
+    try:
+        with file_lock("queues"):
+            records = read_inflight()
+            kept = [r for r in records if r.get("id") not in wanted]
+            if len(kept) != len(records):
+                write_inflight(kept)
+            return len(records) - len(kept)
+    except (LockUnavailable, OSError):
+        # Losing a resolution only costs one redundant re-digest, which the
+        # attempt cap bounds. Failing the upsert would cost the entry.
+        return 0
 
 
 def _age_multiplier(modified):
